@@ -175,119 +175,79 @@ void get_input(char filename[])
 int parallelize() {
   MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-  float* local_x;
-  int recvcount;
   int preverror = 0;
 
-  /*
+  
   // determine number of elements each process will work with (need to add its share of remainder)
-  int remainder = num % comm_sz;
+  int remainder = num % comm_sz; 
   int distr = num / comm_sz; 
-  int start = my_rank * distr + min(my_rank, remainder); 
+  int start;
+  if (my_rank < remainder) {
+  	start = my_rank * distr + my_rank;
+  } else {
+  	start = my_rank * distr + remainder;
+  }
   int finish = start + distr;
   if (my_rank < remainder) finish += 1;
-  */
 
-  // allocate space for arrays to pass to MPI_Scatterv
-  int* counts = (int*)malloc(comm_sz * sizeof(int*));
-  int* displace = (int*)malloc(comm_sz * sizeof(int*));
-  if (my_rank == comm_sz) { // if last process, recvcount is all the elements the previous processes didn't receive
-  	recvcount = num - ((num - 1) * floor(num / comm_sz));
-  } else {
-  	recvcount = floor(num / comm_sz);
-  }
+  // a and b don't change so we can use their global values and not have to distribute them
+  // each process has an array x
 
+  // put new x's in a new array
+  // do error calculation in each process
+  // if the percentage is over, set a flag that says to loop again
+  // use reduce to find the max of those flags (1 means loop again)
+  // Allgather x-news and put them into x-olds
+  // Allgather automatically synchronizes everything!
   int i;
   int j;
-  for (i = 0; i < sizeof(counts); i++) {
-    if (i == sizeof(counts) - 1) {
-   	  counts[i] = num - ((num - 1) * floor(num / comm_sz)); // all remaining elements of a
-    } else {
-   	  counts[i] = floor(num / comm_sz);
-    }
-    displace[i] = i * num * floor(num / comm_sz); // displace[my_rank] gives the displacement of the x value in local_x
-  }
-
-  // even though a is an array of pointers, it should still work to pass MPI_FLOAT as the datatype
-  // a and b don't change so we can use their global values and not have to distribute them
-  MPI_Scatterv(x, counts, displace, MPI_FLOAT, local_x, recvcount, MPI_FLOAT, 0, MPI_COMM_WORLD); // divide x amongst processes
-
-
-  // calculate which portion of x's it is going to find using rank
-
   int sum_x;
   int maxerr = 0;
-  while (preverror > err) {
+  int repeat = 1;
+  while (repeat) { // change this to accept a flag
   	if (my_rank == 0) nit++;
 
-  	// calculate each X value using values from b and a until percent error is less than err or error is same as previously calculated error
-  	float* temp_x = (float*)malloc(sizeof(local_x) * sizeof(float*)); 
-  	for (i = 0; i < sizeof(local_x); i++) {
-      temp_x[i] = local_x[i]; // keep original values in temp_x
-    }
+  	float* new_x = (float*)malloc(num * sizeof(float*)); // keep track of newly calculated x values; use this in call to Allgather to create new x
     
-    for (i = 0; i < sizeof(local_x); i++) {
+    // calculate new x values based on old ones
+    for (i = start; i < finish; i++) { // <= or < ?
       // subtract all x's (except the x at j) * their corresponding a[j] and divide by a[i]
       sum_x = 0;
-      for (j = 0; j < sizeof(local_x); j++) {
+      for (j = 0; j < num; j++) {
       	if (j != i) {
-      		sum_x -= temp_x[j] * local_a[i][j]; // follow calculations from step 1 in instructions
-      		// ** THIS SHOULD BE BASED ON ALL X'S --> You will have to get values from x actually and update x for the next iteration... but that would mean we want each process to have their own copy of all of x so that they don't overwrite one another in case they're on different iterations.
-      		// ** SOMEWHERE ABOVE you'll want to use MPI_Broadcast to send a copy of x to each process 
-      		// either broadcast to every process and each has a local copy of
+      	  sum_x -= x[j] * a[i][j]; // follow calculations from step 1 in instructions
       	}
       }
-      local_x[i] = (b[i] + sum_x) / temp_x[i];
+      new_x[i] = (b[i] + sum_x) / x[i];
     }
 
-    // calculate percent error with new local_x values
-    // preverror is the maximum of all the errors for each x calculated individually
-    // ** preverror IS based on a single block of x values, but programs should not end until ALL of the preverrors are less than maxerr (?)
-
-    for (i = 0; i < sizeof(local_x); i++) { // calculate percent error for each x in local_x, keeping track of the maximum
-      if ((local_x[i] - temp_x[i]) / local_x[i] > maxerr) { 
-      	// Can we calculate percent errors from different iterations at the same time? Sure! Once we are done with the local_x's from one process, that process will be over and its x's finalized -- each having percent error less than err. The other processes must keep going until their own percent errors are smaller than err PROBLEM: I'M CALCULATING VALUES BASED ON ONLY A SUBSET OF X'S, BUT SHOULD BE BASING IT OFF OF ALL X VALUES (each value of x depends on every other value of x, not just the one in the same block) -- ** see notes in previous for loop!!
-      	preverror = (local_x[i] - temp_x[i]) / local_x[i];
+    // calculate percent error for each x in local_x, keeping track of the maximum
+    // use this maximum to set the flag for whether or not to continue the while loop
+    for (i = start; i < finish; i++) {
+      if ((new_x[i] - x[i]) / new_x[i] > maxerr) { 
+      	maxerr = (new_x[i] - x[i]) / new_x[i];
       }
     }
 
-    /*
-	float totalerr;
-    // Determine overall preverr across all x's by summing with MPI_Reduce, then dividing by the number of processes
-    MPI_Allreduce(preverror, totalerr, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
-    // Allreduce because we want each process to end if totalerr <= err
+    int flag = 0;
+    if (maxerr >= err) flag = 1; // if the highest percent error is greater than err, we need to keep looping
 
-    preverror = totalerr; // use maxerr as preverr on next iteration
-    */
+    // set error to the result of reducing the flags, based on whether or not maxerr <= err
+    MPI_Allreduce(&flag, &repeat, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // use flag from each process and * distribute result to each process *
+    // if any of the processes returns 1 for the flag, repeat will be set to 1 and the loop will continue,
+    // otherwise, repeat will be set to 0 and the loop will not continue
 
-    preverror = maxerr; // use maxerr as preverr on next iteration
+    int count = finish - start;
+    printf("num: %f\n", num); // num is 0.000 here but correct in main...
+    printf("%d\n", count);
+    MPI_Allgather(new_x, count, MPI_FLOAT, x, count, MPI_FLOAT, MPI_COMM_WORLD); // concatenate all our new x values (from new_x[]) and put them into x[] (so they will be treated as the initial values of our next iteration)
 
-    free(temp_x);
-  }
-
-  // call MPI_Gather on final local_x's -- ** How to make sure this is only done once ALL processes have finished the while loop?
-  if (my_rank == 0) {
-  	MPI_Gatherv(local_x, sizeof(local_x), MPI_FLOAT, x, counts, displace, MPI_FLOAT, 0, MPI_COMM_WORLD);
-  } else {
-    MPI_Gatherv(local_x, sizeof(local_x), MPI_FLOAT, x, NULL, NULL, NULL, 0, MPI_COMM_WORLD);
+    free(new_x); // values from new_x have been put into x so it is safe to free it
   }
 
   // x should now hold all values within the proper percent error
   // output these values to stdout (in main)
 
-  free(counts);
-  free(displace);
-
-  /* 
-
-
-  Keep a local array that is made up of a single group of rows in a and the corresponding b values (a[i] through a[j] and b[i] through b[j]); these also correspond to x values j through i in our global array x (but each process will have their own temp array)
-
-  use these values to calculate the new x's, which we can store in a temp array and pass to the next call of parallelize, along with the percent error most recently achieved
-
-  calculate the new percent error and compare to the one passed in. If same, exit. Otherwise, check if less than the given %e. If not, copy the temp array into the global array of x's / replace the pointer reference with a reference to this new array and pass that array to another call to parallelize(), freeing the temp array because it is already store in global x (the next call to parallelize will create a new temp array)
-    - make sure that you're using the values from the array passed in in your calculations and only changing the temp array
-  */
 }
 
 /************************************************************/
@@ -295,9 +255,8 @@ int parallelize() {
 
 int main(int argc, char *argv[])
 {
-
  int i;
-
+ 
   
  if( argc != 2)
  {
@@ -314,52 +273,11 @@ int main(int argc, char *argv[])
   * the needed absolute error. 
   * This is not expected to happen for this programming assignment.
   */
+
+ printf("num in main:%d", num);
  check_matrix();
  
  MPI_Init(&argc, &argv);
-
-/*  
-  ** See page 112 for implementation of scatter, 113 for gather
-
-  use MPI_Scatterv to distribute the calculations amongst processes
-  int MPI Scatterv(
-	void∗ sendbuf /∗ in ∗/,
-	int∗ sendcounts /∗ in ∗/, // need to calculate this :(
-	int∗ displacements /∗ in ∗/, // and these
-	MPI Datatype sendtype /∗ in ∗/,
-	void∗ recvbuf /∗ out ∗/,
-	int recvcount /∗ in ∗/,
-	MPI Datatype recvtype /∗ in ∗/,
-	int root /∗ in ∗/,
-	MPI Comm comm /∗ in ∗/);	
-
-IN MY PROGRAM:
-  int* counts = (int*)malloc(comm_sz * sizeof(int*)); 
-  int* displace = (int*)malloc(comm_sz, sizeof(int*));
-
-  // allocate number of elements that will be treated by each process
-  MPI_Scatterv(a, )
-  
-  The single sendcount argument in a call to MPI Scatter is replaced by two array
-arguments: sendcounts and displacements. Both of these arrays contain comm_sz
-elements: sendcounts[q] is the number of objects of type sendtype being sent to
-process q. Furthermore, displacements[q] specifies the start of the block that is
-being sent to process q. The displacement is calculated in units of type sendtype.
-So, for example, if sendtype is MPI INT, and sendbuf has type int∗, then the data
-that is sent to process q will begin in location sendbuf + displacements[q]
-
-Use MPI_Gatherv:
-  int MPI Gatherv(
-	void∗ sendbuf /∗ in ∗/,
-	int sendcount /∗ in ∗/, 
-	MPI Datatype sendtype /∗ in ∗/,
-	void∗ recvbuf /∗ out ∗/,
-	int∗ recvcounts /∗ in ∗/,
-	int∗ displacements /∗ in ∗/,
-	MPI Datatype recvtype /∗ in ∗/,
-	int root /∗ in ∗/,
-	MPI Comm comm /∗ in ∗/);
-*/
 
  parallelize();
 
