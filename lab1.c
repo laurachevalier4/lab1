@@ -20,8 +20,6 @@ float *x;  /* The unknowns */
 float *b;  /* The constants */
 float err; /* The absolute relative error */
 int num = 0;  /* number of unknowns */
-int comm_sz;
-int my_rank;
 int nit = 0; /* number of iterations */ // how to keep track of this? Should each process iterate the same number of times? If not, how can we only keep track of the number of iterations of the program that iterates the most?
 
 
@@ -157,10 +155,15 @@ void get_input(char filename[])
 
 
 int parallelize() {
-  printf("num: %f\n", num); 
+  int comm_sz;
+  int my_rank;
   MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-  int preverror = 0;
+
+
+  if (my_rank == 0) {
+    printf("num in process 0: %f\n", num);
+  }
 
   
   // determine number of elements each process will work with (need to add its share of remainder)
@@ -174,9 +177,9 @@ int parallelize() {
   }
   int finish = start + distr;
   if (my_rank < remainder) finish += 1;
+  int count = finish - start + 1;
 
-  // a and b don't change so we can use their global values and not have to distribute them
-  // each process has an array x
+  float* new_x = (float*)malloc((count) * sizeof(float)); // keep track of newly calculated x values; use this in call to Allgather to create new x
 
   // put new x's in a new array
   // do error calculation in each process
@@ -191,26 +194,24 @@ int parallelize() {
   int repeat = 1;
   while (repeat) { // change this to accept a flag
   	if (my_rank == 0) nit++;
-
-  	float* new_x = (float*)malloc(num * sizeof(float*)); // keep track of newly calculated x values; use this in call to Allgather to create new x
     
     // calculate new x values based on old ones
-    for (i = start; i < finish; i++) { // <= or < ?
+    for (i = 0; i < count; i++) { // <= or < ?
       // subtract all x's (except the x at j) * their corresponding a[j] and divide by a[i]
       sum_x = 0;
       for (j = 0; j < num; j++) {
       	if (j != i) {
-      	  sum_x -= x[j] * a[i][j]; // follow calculations from step 1 in instructions
+      	  sum_x -= x[j] * a[i+start][j]; // follow calculations from step 1 in instructions
       	}
       }
-      new_x[i] = (b[i] + sum_x) / x[i];
+      new_x[i] = (b[i+start] + sum_x) / a[count][count];
     }
 
     // calculate percent error for each x in local_x, keeping track of the maximum
     // use this maximum to set the flag for whether or not to continue the while loop
-    for (i = start; i < finish; i++) {
-      if ((new_x[i] - x[i]) / new_x[i] > maxerr) { 
-      	maxerr = (new_x[i] - x[i]) / new_x[i];
+    for (i = 0; i < count; i++) {
+      if ((new_x[i] - x[i+start]) / new_x[i] > maxerr) { 
+      	maxerr = (new_x[i] - x[i+start]) / new_x[i];
       }
     }
 
@@ -222,15 +223,15 @@ int parallelize() {
     // if any of the processes returns 1 for the flag, repeat will be set to 1 and the loop will continue,
     // otherwise, repeat will be set to 0 and the loop will not continue
 
-    int count = finish - start;
-    printf("num: %f\n", num); // num is 0.000 here but correct in main...
+    printf("num: %f\n", num);
     printf("%d\n", count);
-    MPI_Allgather(new_x, count, MPI_FLOAT, x, count, MPI_FLOAT, MPI_COMM_WORLD); // concatenate all our new x values (from new_x[]) and put them into x[] (so they will be treated as the initial values of our next iteration)
-    if (my_rank == 0) {
-    	nit++; // increment number of iterations
-    }
-    free(new_x); // values from new_x have been put into x so it is safe to free it
+    MPI_Allgather(new_x, count, MPI_FLOAT, x, num, MPI_FLOAT, MPI_COMM_WORLD); // concatenate all our new x values (from new_x[]) and put them into x[] (so they will be treated as the initial values of our next iteration)
+
+    for( i = 0; i < num; i++) // why does this print for each core AFTER MPI_Finalize() has been called?
+      printf("%f\n",x[i]);
   }
+  
+  free(new_x); // values from new_x have been put into x so it is safe to free it
 
   // x should now hold all values within the proper percent error
   // output these values to stdout (in main)
@@ -251,8 +252,6 @@ int main(int argc, char *argv[])
    exit(1);
  }
   
- /* Read the input file and fill the global data structure above */
- get_input(argv[1]);
  // is it better to get all the input before using MPI and then make MPI calls on that global variable? Or use MPI to get the input? Can use MPI to get the input from the global arrays, divide the work accordingly
  
  /* Check for convergence condition */
@@ -264,7 +263,17 @@ int main(int argc, char *argv[])
  check_matrix();
  
  MPI_Init(&argc, &argv);
- printf("num in main:%d\n", num);
+ /* Read the input file and fill the global data structure above */
+ int my_rank;
+ MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+ if (my_rank == 0) {
+   get_input(argv[1]);
+ }
+ // MPI_Bcast(a, num, MPI_FLOAT, 0, MPI_COMM_WORLD);
+ // MPI_Bcast(b, num, MPI_FLOAT, 0, MPI_COMM_WORLD);
+ // MPI_Bcast(x, num, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
  parallelize();
  MPI_Finalize();
  
