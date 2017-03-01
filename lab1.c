@@ -2,7 +2,7 @@
 
 ONCE COMPLETE: Check the correctness of your code with gsref
 - ssh to a crunchy
-- type: module load openmpi-x85_64
+- type: module load openmpi-x86_64
 - compile your program: mpicc -o my_program my_program.c
 */
 
@@ -20,7 +20,7 @@ float *x;  /* The unknowns */
 float *b;  /* The constants */
 float err; /* The absolute relative error */
 int num = 0;  /* number of unknowns */
-int nit = 0; /* number of iterations */ // how to keep track of this? Should each process iterate the same number of times? If not, how can we only keep track of the number of iterations of the program that iterates the most?
+int nit = 0; /* number of iterations */ 
 
 
 /****** Function declarations */
@@ -153,18 +153,24 @@ void get_input(char filename[])
 
 /************************************************************/
 
+//****** WHAT IF THERE ARE MORE PROCESSES THAN ITEMS? **********/
 
 int parallelize() {
+  printf("num in parallelize: %d\n", num);
+  int i;
+  printf("x:\n");
+  for(i = 0; i < num; i++)
+    printf("%f\n",x[i]);
   int comm_sz;
   int my_rank;
   MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
+  printf("my rank: %d\n", my_rank);
 
   if (my_rank == 0) {
     printf("num in process 0: %f\n", num);
   }
-
   
   // determine number of elements each process will work with (need to add its share of remainder)
   int remainder = num % comm_sz; 
@@ -187,7 +193,6 @@ int parallelize() {
   // use reduce to find the max of those flags (1 means loop again)
   // Allgather x-news and put them into x-olds
   // Allgather automatically synchronizes everything!
-  int i;
   int j;
   int sum_x;
   int maxerr = 0;
@@ -223,7 +228,6 @@ int parallelize() {
     // if any of the processes returns 1 for the flag, repeat will be set to 1 and the loop will continue,
     // otherwise, repeat will be set to 0 and the loop will not continue
 
-    printf("num: %f\n", num);
     printf("%d\n", count);
     MPI_Allgather(new_x, count, MPI_FLOAT, x, num, MPI_FLOAT, MPI_COMM_WORLD); // concatenate all our new x values (from new_x[]) and put them into x[] (so they will be treated as the initial values of our next iteration)
 
@@ -245,14 +249,11 @@ int main(int argc, char *argv[])
 {
  int i;
  
-  
  if( argc != 2)
  {
    printf("Usage: gsref filename\n");
    exit(1);
  }
-  
- // is it better to get all the input before using MPI and then make MPI calls on that global variable? Or use MPI to get the input? Can use MPI to get the input from the global arrays, divide the work accordingly
  
  /* Check for convergence condition */
  /* This function will exit the program if the coefficient will never converge to 
@@ -260,7 +261,6 @@ int main(int argc, char *argv[])
   * This is not expected to happen for this programming assignment.
   */
 
- check_matrix();
  
  MPI_Init(&argc, &argv);
  /* Read the input file and fill the global data structure above */
@@ -269,17 +269,26 @@ int main(int argc, char *argv[])
 
  if (my_rank == 0) {
    get_input(argv[1]);
- }
- // MPI_Bcast(a, num, MPI_FLOAT, 0, MPI_COMM_WORLD);
- // MPI_Bcast(b, num, MPI_FLOAT, 0, MPI_COMM_WORLD);
- // MPI_Bcast(x, num, MPI_FLOAT, 0, MPI_COMM_WORLD);
+   check_matrix();
+ } 
+ //MPI_Barrier(MPI_COMM_WORLD);
+ MPI_Bcast(&num, 1, MPI_INT, 0, MPI_COMM_WORLD);
+ printf("call to MPI bcast for a\n");
+ MPI_Bcast(a, num, MPI_FLOAT, 0, MPI_COMM_WORLD);
+ printf("call to MPI bcast for b\n");
+ MPI_Bcast(b, num, MPI_FLOAT, 0, MPI_COMM_WORLD);
+ printf("call to MPI bcast for x\n");
+ MPI_Bcast(x, num, MPI_FLOAT, 0, MPI_COMM_WORLD);
+ MPI_Bcast(&num, 1, MPI_INT, 0, MPI_COMM_WORLD);
+ printf("calls to MPI_Bcast done\n");
+ printf("num after broadcast:%d\n", num);
 
  parallelize();
  MPI_Finalize();
  
  /* Writing to the stdout */
  /* Keep that same format */
- for( i = 0; i < num; i++) // why does this print for each core AFTER MPI_Finalize() has been called?
+ for( i = 0; i < num; i++)
    printf("%f\n",x[i]);
  
  printf("total number of iterations: %d\n", nit);
