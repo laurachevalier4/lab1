@@ -172,7 +172,8 @@ void get_input(char filename[])
 /************************************************************/
 
 
-int parallelize() {
+int parallelize(int num, float** a, float* x, float* b) {
+  printf("num: %f\n", num); 
   MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
   int preverror = 0;
@@ -241,7 +242,9 @@ int parallelize() {
     printf("num: %f\n", num); // num is 0.000 here but correct in main...
     printf("%d\n", count);
     MPI_Allgather(new_x, count, MPI_FLOAT, x, count, MPI_FLOAT, MPI_COMM_WORLD); // concatenate all our new x values (from new_x[]) and put them into x[] (so they will be treated as the initial values of our next iteration)
-
+    if (my_rank == 0) {
+    	nit++; // increment number of iterations
+    }
     free(new_x); // values from new_x have been put into x so it is safe to free it
   }
 
@@ -274,12 +277,10 @@ int main(int argc, char *argv[])
   * This is not expected to happen for this programming assignment.
   */
 
- printf("num in main:%d", num);
  check_matrix();
  
  MPI_Init(&argc, &argv);
-
- parallelize();
+ printf("num in main:%d\n", num);
 
  MPI_Finalize();
  
