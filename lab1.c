@@ -1,20 +1,4 @@
 /*
-1) Calculate x1 through xn using mode of calculation presented in step 1
-2) Substitute initial values for each xj when calculating each xi (do NOT use the newly calculated values of previous xi until the next round of calculations)
-3) Calculate the percent error using step 2. If the error is greater than the given %e or equal to the previously calculated %e, repeat steps 1 and two (using the newly calculated x1 through xn as initial values)
-
-INPUT: A text file xxxx.txt
-- must be able to run as mpirun -n x my_program inputfile.txt
-  (where x is the number of processes)
-
-OUTPUT: The value of each unknown
-x1
-x2
-x3 
-.
-.
-.
-xn
 
 ONCE COMPLETE: Check the correctness of your code with gsref
 - ssh to a crunchy
@@ -172,7 +156,7 @@ void get_input(char filename[])
 /************************************************************/
 
 
-int parallelize(int num, float** a, float* x, float* b) {
+int parallelize() {
   printf("num: %f\n", num); 
   MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
@@ -281,7 +265,7 @@ int main(int argc, char *argv[])
  
  MPI_Init(&argc, &argv);
  printf("num in main:%d\n", num);
-
+ parallelize();
  MPI_Finalize();
  
  /* Writing to the stdout */
