@@ -158,7 +158,7 @@ void get_input(char filename[])
 int parallelize() {
   printf("num in parallelize: %d\n", num);
   int i;
-  printf("x:\n");
+  printf("x in parallelize:\n");
   for(i = 0; i < num; i++)
     printf("%f\n",x[i]);
   int comm_sz;
@@ -169,7 +169,7 @@ int parallelize() {
   printf("my rank: %d\n", my_rank);
 
   if (my_rank == 0) {
-    printf("num in process 0: %f\n", num);
+    printf("num in process 0: %d\n", num);
   }
   
   // determine number of elements each process will work with (need to add its share of remainder)
@@ -260,29 +260,30 @@ int main(int argc, char *argv[])
   * the needed absolute error. 
   * This is not expected to happen for this programming assignment.
   */
-
+ get_input(argv[1]);
+   check_matrix();
  
  MPI_Init(&argc, &argv);
  /* Read the input file and fill the global data structure above */
  int my_rank;
  MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-
- if (my_rank == 0) {
-   get_input(argv[1]);
-   check_matrix();
- } 
+ 
+ for( i = 0; i < num; i++)
+  printf("%f\n",x[i]);
+ printf("%d\n", num);
  //MPI_Barrier(MPI_COMM_WORLD);
- MPI_Bcast(&num, 1, MPI_INT, 0, MPI_COMM_WORLD);
- printf("call to MPI bcast for a\n");
- MPI_Bcast(a, num, MPI_FLOAT, 0, MPI_COMM_WORLD);
+ //MPI_Bcast(&num, 1, MPI_INT, 0, MPI_COMM_WORLD); // the segfault is here
+ //printf("call to MPI bcast for a\n");
+ /*MPI_Bcast(a, sizeof(a), MPI_FLOAT, 0, MPI_COMM_WORLD);
  printf("call to MPI bcast for b\n");
- MPI_Bcast(b, num, MPI_FLOAT, 0, MPI_COMM_WORLD);
+ MPI_Bcast(b, sizeof(b), MPI_FLOAT, 0, MPI_COMM_WORLD);
  printf("call to MPI bcast for x\n");
- MPI_Bcast(x, num, MPI_FLOAT, 0, MPI_COMM_WORLD);
- MPI_Bcast(&num, 1, MPI_INT, 0, MPI_COMM_WORLD);
+ MPI_Bcast(x, sizeof(x), MPI_FLOAT, 0, MPI_COMM_WORLD);
+ //MPI_Barrier(MPI_COMM_WORLD);
  printf("calls to MPI_Bcast done\n");
  printf("num after broadcast:%d\n", num);
-
+ for( i = 0; i < num; i++)
+  printf("%f\n",x[i]);*/
  parallelize();
  MPI_Finalize();
  
