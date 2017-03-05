@@ -155,35 +155,30 @@ void get_input(char filename[])
 
 //****** WHAT IF THERE ARE MORE PROCESSES THAN ITEMS? **********/
 
-int parallelize() {
-  printf("num in parallelize: %d\n", num);
+int parallelize() { // Use allgather to get counts and displacements for each process into one array, then call allgatherv using those numbers
   int i;
-  printf("x in parallelize:\n");
-  for(i = 0; i < num; i++)
-    printf("%f\n",x[i]);
   int comm_sz;
   int my_rank;
   MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-
-  printf("my rank: %d\n", my_rank);
-
-  if (my_rank == 0) {
-    printf("num in process 0: %d\n", num);
-  }
   
   // determine number of elements each process will work with (need to add its share of remainder)
-  int remainder = num % comm_sz; 
+  int remainder;
+  if (num < comm_sz) {
+    remainder = comm_sz;
+  } else {
+    remainder = num % comm_sz;
+  }
   int distr = num / comm_sz; 
-  int start;
+  int start; 
   if (my_rank < remainder) {
-  	start = my_rank * distr + my_rank;
+  	start = my_rank * distr + my_rank; 
   } else {
   	start = my_rank * distr + remainder;
   }
-  int finish = start + distr;
+  int finish = start + distr - 1; 
   if (my_rank < remainder) finish += 1;
-  int count = finish - start + 1;
+  int count = finish - start + 1; 
 
   float* new_x = (float*)malloc((count) * sizeof(float)); // keep track of newly calculated x values; use this in call to Allgather to create new x
 
@@ -194,45 +189,59 @@ int parallelize() {
   // Allgather x-news and put them into x-olds
   // Allgather automatically synchronizes everything!
   int j;
-  int sum_x;
-  int maxerr = 0;
+  float sum_x;
+  float maxerr;
   int repeat = 1;
   while (repeat) { // change this to accept a flag
+    //printf("rank: %d\n", my_rank);
+    //printf("count: %d\n", count);
+    //if (my_rank == 0) {
+      for( i = 0; i < num; i++)
+        printf("%f\n",x[i]);
+    //}
+    /*printf("\nx in process %d\n", my_rank);
+    for( i = 0; i < num; i++)
+      printf("%f\n",x[i]);*/
+    maxerr = 0.0;
   	if (my_rank == 0) nit++;
     
     // calculate new x values based on old ones
-    for (i = 0; i < count; i++) { // <= or < ?
+    for (i = 0; i < count; i++) { // < 1
       // subtract all x's (except the x at j) * their corresponding a[j] and divide by a[i]
       sum_x = 0;
-      for (j = 0; j < num; j++) {
-      	if (j != i) {
+      for (j = 0; j < num; j++) { 
+      	if (j != i+start) {
       	  sum_x -= x[j] * a[i+start][j]; // follow calculations from step 1 in instructions
+          //printf("sumx from process %f: %f\n", my_rank, sum_x);
       	}
       }
-      new_x[i] = (b[i+start] + sum_x) / a[count][count];
+      new_x[i] = ((b[i+start] + sum_x) / a[i+start][i+start]);
+      //printf("\nnew x from process %d: %f\n", my_rank, new_x[i]);
     }
 
     // calculate percent error for each x in local_x, keeping track of the maximum
     // use this maximum to set the flag for whether or not to continue the while loop
+    float curr_err;
     for (i = 0; i < count; i++) {
-      if ((new_x[i] - x[i+start]) / new_x[i] > maxerr) { 
-      	maxerr = (new_x[i] - x[i+start]) / new_x[i];
+      curr_err = (new_x[i] - x[i+start]) / new_x[i];
+      if (curr_err < 0) {
+        curr_err *= -1.0;
+      }
+      if (curr_err > maxerr) { 
+      	maxerr = curr_err;
       }
     }
 
+    printf("maxerr in process %d: %f\n", my_rank, maxerr);
     int flag = 0;
     if (maxerr >= err) flag = 1; // if the highest percent error is greater than err, we need to keep looping
 
-    // set error to the result of reducing the flags, based on whether or not maxerr <= err
-    MPI_Allreduce(&flag, &repeat, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // use flag from each process and * distribute result to each process *
+    // set error to the result of reducing the flags, based on whether or not maxerr >= err
+    MPI_Allreduce(&flag, &repeat, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     // if any of the processes returns 1 for the flag, repeat will be set to 1 and the loop will continue,
     // otherwise, repeat will be set to 0 and the loop will not continue
 
-    printf("%d\n", count);
-    MPI_Allgather(new_x, count, MPI_FLOAT, x, num, MPI_FLOAT, MPI_COMM_WORLD); // concatenate all our new x values (from new_x[]) and put them into x[] (so they will be treated as the initial values of our next iteration)
-
-    for( i = 0; i < num; i++) // why does this print for each core AFTER MPI_Finalize() has been called?
-      printf("%f\n",x[i]);
+    MPI_Allgather(new_x, count, MPI_FLOAT, x, count, MPI_FLOAT, MPI_COMM_WORLD); // concatenate all our new x values (from new_x[]) and put them into x[] (so they will be treated as the initial values of our next iteration)
   }
   
   free(new_x); // values from new_x have been put into x so it is safe to free it
@@ -268,31 +277,17 @@ int main(int argc, char *argv[])
  int my_rank;
  MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
  
- for( i = 0; i < num; i++)
-  printf("%f\n",x[i]);
- printf("%d\n", num);
- //MPI_Barrier(MPI_COMM_WORLD);
- //MPI_Bcast(&num, 1, MPI_INT, 0, MPI_COMM_WORLD); // the segfault is here
- //printf("call to MPI bcast for a\n");
- /*MPI_Bcast(a, sizeof(a), MPI_FLOAT, 0, MPI_COMM_WORLD);
- printf("call to MPI bcast for b\n");
- MPI_Bcast(b, sizeof(b), MPI_FLOAT, 0, MPI_COMM_WORLD);
- printf("call to MPI bcast for x\n");
- MPI_Bcast(x, sizeof(x), MPI_FLOAT, 0, MPI_COMM_WORLD);
- //MPI_Barrier(MPI_COMM_WORLD);
- printf("calls to MPI_Bcast done\n");
- printf("num after broadcast:%d\n", num);
- for( i = 0; i < num; i++)
-  printf("%f\n",x[i]);*/
  parallelize();
  MPI_Finalize();
  
  /* Writing to the stdout */
  /* Keep that same format */
- for( i = 0; i < num; i++)
-   printf("%f\n",x[i]);
+ if (my_rank == 0) {
+  for( i = 0; i < num; i++)
+    printf("%f\n",x[i]);
+  printf("total number of iterations: %d\n", nit);
+}
  
- printf("total number of iterations: %d\n", nit);
  
  exit(0);
 
