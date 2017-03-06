@@ -159,6 +159,8 @@ int parallelize() { // Use allgather to get counts and displacements for each pr
   int i;
   int comm_sz;
   int my_rank;
+  int *counts = (int*)malloc(num * sizeof(int));
+  int *displs = (int*)malloc(num * sizeof(int));
   MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
   
@@ -180,7 +182,7 @@ int parallelize() { // Use allgather to get counts and displacements for each pr
   if (my_rank < remainder) finish += 1;
   int count = finish - start + 1; 
 
-  float* new_x = (float*)malloc((count) * sizeof(float)); // keep track of newly calculated x values; use this in call to Allgather to create new x
+  float* new_x = (float*)malloc(count * sizeof(float)); // keep track of newly calculated x values; use this in call to Allgather to create new x
 
   // put new x's in a new array
   // do error calculation in each process
@@ -193,15 +195,9 @@ int parallelize() { // Use allgather to get counts and displacements for each pr
   float maxerr;
   int repeat = 1;
   while (repeat) { // change this to accept a flag
-    //printf("rank: %d\n", my_rank);
-    //printf("count: %d\n", count);
-    //if (my_rank == 0) {
-      for( i = 0; i < num; i++)
-        printf("%f\n",x[i]);
-    //}
-    /*printf("\nx in process %d\n", my_rank);
     for( i = 0; i < num; i++)
-      printf("%f\n",x[i]);*/
+      printf("%f\n",x[i]);
+
     maxerr = 0.0;
   	if (my_rank == 0) nit++;
     
@@ -212,11 +208,9 @@ int parallelize() { // Use allgather to get counts and displacements for each pr
       for (j = 0; j < num; j++) { 
       	if (j != i+start) {
       	  sum_x -= x[j] * a[i+start][j]; // follow calculations from step 1 in instructions
-          //printf("sumx from process %f: %f\n", my_rank, sum_x);
       	}
       }
       new_x[i] = ((b[i+start] + sum_x) / a[i+start][i+start]);
-      //printf("\nnew x from process %d: %f\n", my_rank, new_x[i]);
     }
 
     // calculate percent error for each x in local_x, keeping track of the maximum
@@ -240,8 +234,9 @@ int parallelize() { // Use allgather to get counts and displacements for each pr
     MPI_Allreduce(&flag, &repeat, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     // if any of the processes returns 1 for the flag, repeat will be set to 1 and the loop will continue,
     // otherwise, repeat will be set to 0 and the loop will not continue
-
-    MPI_Allgather(new_x, count, MPI_FLOAT, x, count, MPI_FLOAT, MPI_COMM_WORLD); // concatenate all our new x values (from new_x[]) and put them into x[] (so they will be treated as the initial values of our next iteration)
+    MPI_Allgather(&count, 1, MPI_INT, counts, 1, MPI_INT, MPI_COMM_WORLD);
+    MPI_Allgather(&start, 1, MPI_INT, displs, 1, MPI_INT, MPI_COMM_WORLD);
+    MPI_Allgatherv(new_x, count, MPI_FLOAT, x, counts, displs, MPI_FLOAT, MPI_COMM_WORLD); // concatenate all our new x values (from new_x[]) and put them into x[] (so they will be treated as the initial values of our next iteration)
   }
   
   free(new_x); // values from new_x have been put into x so it is safe to free it
