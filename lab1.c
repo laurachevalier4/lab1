@@ -159,10 +159,11 @@ int parallelize() { // Use allgather to get counts and displacements for each pr
   int i;
   int comm_sz;
   int my_rank;
-  int *counts = (int*)malloc(num * sizeof(int));
-  int *displs = (int*)malloc(num * sizeof(int));
   MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+  int *counts = (int*)malloc(comm_sz * sizeof(int));
+  int *displs = (int*)malloc(comm_sz * sizeof(int));
   
   // determine number of elements each process will work with (need to add its share of remainder)
   int remainder;
@@ -195,8 +196,6 @@ int parallelize() { // Use allgather to get counts and displacements for each pr
   float maxerr;
   int repeat = 1;
   while (repeat) { // change this to accept a flag
-    for( i = 0; i < num; i++)
-      printf("%f\n",x[i]);
 
     maxerr = 0.0;
   	if (my_rank == 0) nit++;
@@ -226,7 +225,6 @@ int parallelize() { // Use allgather to get counts and displacements for each pr
       }
     }
 
-    printf("maxerr in process %d: %f\n", my_rank, maxerr);
     int flag = 0;
     if (maxerr >= err) flag = 1; // if the highest percent error is greater than err, we need to keep looping
 
@@ -271,8 +269,16 @@ int main(int argc, char *argv[])
  /* Read the input file and fill the global data structure above */
  int my_rank;
  MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+ double local_start, local_finish, local_elapsed, elapsed;
+ 
+ MPI_Barrier(MPI_COMM_WORLD);
+ local_start = MPI_Wtime();
  
  parallelize();
+
+ local_finish = MPI_Wtime();
+ local_elapsed = local_finish-local_start;
+ MPI_Reduce(&local_elapsed, &elapsed, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
  MPI_Finalize();
  
  /* Writing to the stdout */
@@ -281,6 +287,11 @@ int main(int argc, char *argv[])
   for( i = 0; i < num; i++)
     printf("%f\n",x[i]);
   printf("total number of iterations: %d\n", nit);
+
+ if(my_rank==0)
+ {
+   printf("Elapsed time = %e seconds\n", elapsed);
+ }
 }
  
  
